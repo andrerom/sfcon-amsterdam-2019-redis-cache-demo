@@ -107,4 +107,15 @@ class Paginator
     {
         return $this->results;
     }
+
+    public function __sleep()
+    {
+        unset($this->queryBuilder);
+        return [
+            'currentPage',
+            'pageSize',
+            'results',
+            'numResults',
+        ];
+    }
 }

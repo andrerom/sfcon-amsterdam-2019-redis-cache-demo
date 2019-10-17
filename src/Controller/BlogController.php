@@ -15,6 +15,7 @@ use App\Entity\Comment;
 use App\Entity\Post;
 use App\Events\CommentCreatedEvent;
 use App\Form\CommentType;
+use App\Pagination\Paginator;
 use App\Repository\PostRepository;
 use App\Repository\TagRepository;
 use Sensio\Bundle\FrameworkExtraBundle\Configuration\Cache;
@@ -25,6 +26,8 @@ use Symfony\Component\EventDispatcher\EventDispatcherInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Contracts\Cache\ItemInterface;
+use Symfony\Contracts\Cache\TagAwareCacheInterface;
 
 /**
  * Controller used to manage blog contents in the public part of the site.
@@ -46,13 +49,32 @@ class BlogController extends AbstractController
      * Content-Type header for the response.
      * See https://symfony.com/doc/current/quick_tour/the_controller.html#using-formats
      */
-    public function index(Request $request, int $page, string $_format, PostRepository $posts, TagRepository $tags): Response
+    public function index(Request $request, int $page, string $_format, PostRepository $posts, TagRepository $tags, TagAwareCacheInterface $cache): Response
     {
-        $tag = null;
-        if ($request->query->has('tag')) {
-            $tag = $tags->findOneBy(['name' => $request->query->get('tag')]);
+        $tag = $request->query->has('tag') ? $request->query->get('tag') : null;
+
+        /**
+         * Ideally this should have been done in PostRepsitory, so it could handle invalidation on changes also.
+         * But for showing how this works it's simpler to show it here.
+         *
+         * @var $cache \Psr\Cache\CacheItemPoolInterface
+         * @var $item ItemInterface
+         */
+        $item = $cache->getItem('page-index-' . $page . ($tag ? '-' . $tag : ''));
+        if (!$item->isHit()) {
+            if ($tag) {
+                $tag = $tags->findOneBy(['name' => $tag]);
+            }
+            $latestPosts = $posts->findLatest($page, $tag);
+            // Using cache tag we can clear all pages with or without "blog classification tag" filtering
+            $item->tag(
+                $this->getBlogCacheTags($latestPosts)
+            );
+            $item->set($latestPosts);
+            $cache->save($item);
+        } else {
+            $latestPosts = $item->get();
         }
-        $latestPosts = $posts->findLatest($page, $tag);
 
         // Every template name also has two extensions that specify the format and
         // engine for that template.
@@ -60,6 +82,17 @@ class BlogController extends AbstractController
         return $this->render('blog/index.'.$_format.'.twig', [
             'paginator' => $latestPosts,
         ]);
+    }
+
+    private function getBlogCacheTags(Paginator $posts) : array
+    {
+        $tags = ['blog-post-list'];
+        /** @var $post Post */
+        foreach ($posts->getResults() as $post) {
+            $tags[] = 'blog-post-' . $post->getId();
+        }
+
+        return $tags;
     }
 
     /**
