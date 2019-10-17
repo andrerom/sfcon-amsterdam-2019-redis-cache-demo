@@ -22,6 +22,7 @@ use Symfony\Component\Form\Extension\Core\Type\SubmitType;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Routing\Annotation\Route;
+use Symfony\Contracts\Cache\TagAwareCacheInterface;
 
 /**
  * Controller used to manage blog contents in the backend.
@@ -70,7 +71,7 @@ class BlogController extends AbstractController
      * to constraint the HTTP methods each controller responds to (by default
      * it responds to all methods).
      */
-    public function new(Request $request): Response
+    public function new(Request $request, TagAwareCacheInterface $cache): Response
     {
         $post = new Post();
         $post->setAuthor($this->getUser());
@@ -91,6 +92,8 @@ class BlogController extends AbstractController
             $em = $this->getDoctrine()->getManager();
             $em->persist($post);
             $em->flush();
+
+            $cache->invalidateTags(['blog-post-list']);
 
             // Flash messages are used to notify the user about the result of the
             // actions. They are deleted automatically from the session as soon
@@ -133,7 +136,7 @@ class BlogController extends AbstractController
      * @Route("/{id<\d+>}/edit",methods={"GET", "POST"}, name="admin_post_edit")
      * @IsGranted("edit", subject="post", message="Posts can only be edited by their authors.")
      */
-    public function edit(Request $request, Post $post): Response
+    public function edit(Request $request, Post $post, TagAwareCacheInterface $cache): Response
     {
         $form = $this->createForm(PostType::class, $post);
         $form->handleRequest($request);
@@ -141,6 +144,7 @@ class BlogController extends AbstractController
         if ($form->isSubmitted() && $form->isValid()) {
             $post->setSlug(Slugger::slugify($post->getTitle()));
             $this->getDoctrine()->getManager()->flush();
+            $cache->invalidateTags(['blog-post-' . $post->getId()]);
 
             $this->addFlash('success', 'post.updated_successfully');
 
